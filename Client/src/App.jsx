@@ -364,18 +364,32 @@ export default function App() {
     setResults([])
     setSearched(true)
 
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 60000) // 60 second timeout
+
     try {
-      const res = await fetch('http://localhost:3000/api/scrape-gmb', {
+      console.log('Starting search for:', { location, businessType })
+      const res = await fetch('https://webscraping-a1ky.onrender.com/api/scrape-gmb', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ location, businessType })
+        body: JSON.stringify({ location, businessType }),
+        signal: controller.signal
       })
+      clearTimeout(timeoutId)
+      console.log('Response status:', res.status)
       const data = await res.json()
+      console.log('Response data:', data)
       if (!res.ok || !data.success) throw new Error(data.error || 'Failed to get results')
       setResults(data.data)
     } catch (err) {
-      setError(err.message)
+      console.error('Search error:', err)
+      if (err.name === 'AbortError') {
+        setError('Request timed out. The server is taking too long to respond.')
+      } else {
+        setError(err.message)
+      }
     } finally {
+      clearTimeout(timeoutId)
       setIsLoading(false)
     }
   }

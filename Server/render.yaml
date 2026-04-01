@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: gmb-scout-server
+    env: node
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: apt-get update && apt-get install -y chromium
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+      - key: PUPPETEER_SKIP_DOWNLOAD
+        value: true
+      - key: RENDER
+        value: true
