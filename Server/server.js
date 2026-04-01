@@ -3,9 +3,41 @@ import cors from 'cors';
 import puppeteer from 'puppeteer';
 import rateLimit from 'express-rate-limit';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+
+// Configure Puppeteer for Render
+const getPuppeteerConfig = () => {
+  const isRender = process.env.RENDER || false;
+  
+  return {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-web-security',
+      '--lang=en-US',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu'
+    ],
+    executablePath: isRender ? '/usr/bin/chromium' : undefined,
+    env: {
+      ...process.env,
+      PUPPETEER_CACHE_DIR: path.join(__dirname, '.cache', 'puppeteer')
+    }
+  };
+};
 
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
 app.use(limiter);
@@ -13,16 +45,7 @@ app.use(cors());
 app.use(express.json());
 
 async function scrapeGoogleMaps(businessType, location) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-web-security',
-      '--lang=en-US'
-    ]
-  });
+  const browser = await puppeteer.launch(getPuppeteerConfig());
 
   const page = await browser.newPage();
 
