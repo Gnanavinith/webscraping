@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3000;
 const getPuppeteerConfig = () => {
   const isRender = process.env.RENDER || false;
   
-  return {
+  const config = {
     headless: true,
     args: [
       '--no-sandbox',
@@ -31,12 +31,34 @@ const getPuppeteerConfig = () => {
       '--single-process',
       '--disable-gpu'
     ],
-    executablePath: isRender ? '/usr/bin/google-chrome' : undefined,
     env: {
       ...process.env,
       PUPPETEER_CACHE_DIR: path.join(__dirname, '.cache', 'puppeteer')
     }
   };
+  
+  // On Render, don't set executablePath - let puppeteer find it
+  // Only set if we're sure about the path
+  if (isRender) {
+    // Try common paths
+    const fs = require('fs');
+    const possiblePaths = [
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium'
+    ];
+    
+    for (const chromePath of possiblePaths) {
+      if (fs.existsSync(chromePath)) {
+        console.log('Found Chrome at:', chromePath);
+        config.executablePath = chromePath;
+        break;
+      }
+    }
+  }
+  
+  return config;
 };
 
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
@@ -45,7 +67,11 @@ app.use(cors());
 app.use(express.json());
 
 async function scrapeGoogleMaps(businessType, location) {
-  const browser = await puppeteer.launch(getPuppeteerConfig());
+  console.log('Launching Puppeteer...');
+  const config = getPuppeteerConfig();
+  console.log('Puppeteer config:', JSON.stringify(config, null, 2));
+  
+  const browser = await puppeteer.launch(config);
 
   const page = await browser.newPage();
 
