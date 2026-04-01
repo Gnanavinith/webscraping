@@ -31,7 +31,7 @@ const getPuppeteerConfig = () => {
       '--single-process',
       '--disable-gpu'
     ],
-    executablePath: isRender ? '/usr/bin/chromium' : undefined,
+    executablePath: isRender ? '/usr/bin/google-chrome' : undefined,
     env: {
       ...process.env,
       PUPPETEER_CACHE_DIR: path.join(__dirname, '.cache', 'puppeteer')
