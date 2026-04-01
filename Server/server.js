@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3000;
 const getPuppeteerConfig = () => {
   const isRender = process.env.RENDER || false;
   
-  const config = {
+  return {
     headless: true,
     args: [
       '--no-sandbox',
@@ -31,34 +31,12 @@ const getPuppeteerConfig = () => {
       '--single-process',
       '--disable-gpu'
     ],
+    executablePath: isRender ? undefined : undefined, // Let puppeteer use default Chrome locally
     env: {
       ...process.env,
       PUPPETEER_CACHE_DIR: path.join(__dirname, '.cache', 'puppeteer')
     }
   };
-  
-  // On Render, don't set executablePath - let puppeteer find it
-  // Only set if we're sure about the path
-  if (isRender) {
-    // Try common paths
-    const fs = require('fs');
-    const possiblePaths = [
-      '/usr/bin/google-chrome-stable',
-      '/usr/bin/chromium-browser',
-      '/usr/bin/google-chrome',
-      '/usr/bin/chromium'
-    ];
-    
-    for (const chromePath of possiblePaths) {
-      if (fs.existsSync(chromePath)) {
-        console.log('Found Chrome at:', chromePath);
-        config.executablePath = chromePath;
-        break;
-      }
-    }
-  }
-  
-  return config;
 };
 
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
