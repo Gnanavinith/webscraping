@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import puppeteer from 'puppeteer';
 import rateLimit from 'express-rate-limit';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -12,31 +11,24 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Trust proxy for Render (fixes X-Forwarded-For warning)
 app.set('trust proxy', 1);
 
-// Configure Puppeteer for Render
-const getPuppeteerConfig = () => {
-  const isRender = process.env.RENDER || false;
-  
-  return {
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-web-security',
-      '--lang=en-US',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-gpu'
-    ],
-    executablePath: undefined // Let puppeteer find the installed chrome
-  };
-};
+const getPuppeteerConfig = () => ({
+  headless: true,
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-blink-features=AutomationControlled',
+    '--disable-web-security',
+    '--lang=en-US',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--single-process',
+    '--disable-gpu'
+  ],
+});
 
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
 app.use(limiter);
@@ -45,11 +37,7 @@ app.use(express.json());
 
 async function scrapeGoogleMaps(businessType, location) {
   console.log('Launching Puppeteer...');
-  const config = getPuppeteerConfig();
-  console.log('Puppeteer config:', JSON.stringify(config, null, 2));
-  
-  const browser = await puppeteer.launch(config);
-
+  const browser = await puppeteer.launch(getPuppeteerConfig());
   const page = await browser.newPage();
 
   await page.evaluateOnNewDocument(() => {
@@ -90,7 +78,6 @@ async function scrapeGoogleMaps(businessType, location) {
     console.log('Feed found');
   } catch (e) {
     console.log('Feed NOT found');
-    await page.screenshot({ path: 'debug-no-feed.png', fullPage: true });
     await browser.close();
     return [];
   }
@@ -98,139 +85,141 @@ async function scrapeGoogleMaps(businessType, location) {
   // Scroll to load all results
   await autoScroll(page, feedSelector);
   await new Promise(r => setTimeout(r, 2000));
-  await page.screenshot({ path: 'debug-after-scroll.png', fullPage: true });
 
-  // DIAGNOSTIC: dump feed structure so we can see what selectors to use
-  const diagnostics = await page.evaluate(() => {
-    const feed = document.querySelector('div[role="feed"]');
-    if (!feed) return { error: 'no feed' };
-
-    const directChildren = Array.from(feed.children);
-
-    const childSummaries = directChildren.slice(0, 5).map((child, i) => ({
-      index: i,
-      tag: child.tagName,
-      classes: child.className,
-      childCount: child.children.length,
-      htmlSnippet: child.innerHTML.slice(0, 600),
-      links: Array.from(child.querySelectorAll('a[href]')).map(a => ({
-        href: a.getAttribute('href')?.slice(0, 100),
-        label: a.getAttribute('aria-label')?.slice(0, 80),
-        text: a.textContent.trim().slice(0, 60)
-      })),
-      ariaLabels: Array.from(child.querySelectorAll('[aria-label]')).map(el => ({
-        tag: el.tagName,
-        label: el.getAttribute('aria-label')?.slice(0, 100),
-        text: el.textContent.trim().slice(0, 60)
-      })).slice(0, 10),
-      spans: Array.from(child.querySelectorAll('span')).map(s => s.textContent.trim()).filter(t => t).slice(0, 10),
-    }));
-
-    return {
-      feedChildCount: directChildren.length,
-      feedClasses: feed.className,
-      children: childSummaries
-    };
-  });
-
-  fs.writeFileSync('diagnostics.json', JSON.stringify(diagnostics, null, 2));
-  console.log('\n=== DIAGNOSTICS SAVED TO diagnostics.json ===');
-  console.log(`Feed has ${diagnostics.feedChildCount} direct children`);
-
-  // EXTRACTION: anchor-first strategy — find all /maps/place/ links, walk up to card root
+  // Click each listing and extract data from the detail panel
   const businesses = await page.evaluate(() => {
     const results = [];
     const feed = document.querySelector('div[role="feed"]');
     if (!feed) return results;
 
-    const placeLinks = feed.querySelectorAll('a[href*="/maps/place/"]');
-    console.log(`Found ${placeLinks.length} place links`);
-
     const seenNames = new Set();
 
-    placeLinks.forEach(link => {
-      try {
-        // Walk up to the direct child of feed (the card root)
-        let card = link;
-        while (card.parentElement && card.parentElement !== feed) {
-          card = card.parentElement;
-        }
-        if (card.parentElement !== feed) return;
+    // Strategy: get all direct children of feed (each is a listing card)
+    const cards = Array.from(feed.children);
+    console.log(`Total cards: ${cards.length}`);
 
-        // Name
-        let name = link.getAttribute('aria-label') || link.textContent.trim();
-        const heading = card.querySelector('[role="heading"], h2, h3, span.fontHeadlineSmall');
-        if (heading) name = heading.textContent.trim();
+    cards.forEach((card, idx) => {
+      try {
+        // Get all text content from the card
+        const allSpans = Array.from(card.querySelectorAll('span'))
+          .map(s => s.textContent.trim())
+          .filter(t => t.length > 0);
+
+        // Find the place link with aria-label (this is the business name)
+        const placeLink = card.querySelector('a[href*="/maps/place/"]');
+        if (!placeLink) return;
+
+        // Name: prefer aria-label on the link, fallback to heading
+        let name = placeLink.getAttribute('aria-label') || '';
+        if (!name) {
+          const heading = card.querySelector('[role="heading"]');
+          name = heading ? heading.textContent.trim() : '';
+        }
+        // Clean name - remove trailing junk
+        name = name.replace(/·.*$/, '').trim();
+
         if (!name || name.length < 2 || seenNames.has(name)) return;
         seenNames.add(name);
 
-        // Rating
-        let rating = null;
-        const ratingEl = card.querySelector('span[role="img"][aria-label]');
-        if (ratingEl) {
-          const m = (ratingEl.getAttribute('aria-label') || '').match(/[\d.]+/);
-          rating = m ? m[0] : null;
-        }
+        // All links in card
+        const allLinks = Array.from(card.querySelectorAll('a[href]'));
 
-        // Reviews
-        let reviews = null;
-        card.querySelectorAll('span[aria-label]').forEach(el => {
-          const lbl = el.getAttribute('aria-label') || '';
-          if (lbl.match(/review/i)) {
-            const m = lbl.match(/[\d,]+/);
-            if (m) reviews = m[0];
-          }
-        });
-        if (!reviews) {
-          const m = card.textContent.match(/\(([\d,]+)\)/);
-          if (m) reviews = m[1];
-        }
-
-        // All visible text lines for address/phone
-        const allText = Array.from(card.querySelectorAll('span, div'))
-          .map(el => {
-            if (el.children.length > 3) return '';
-            return el.textContent.trim();
-          })
-          .filter(t => t.length > 2 && t.length < 120 && t !== name)
-          .filter((t, i, arr) => arr.indexOf(t) === i);
-
-        const phone = allText.find(t => t.match(/^(\+?[\d\s\-().]{7,20})$/) && t.match(/\d{4,}/)) || null;
-        const address = allText.find(t =>
-          t !== phone &&
-          t.length > 8 &&
-          (t.match(/\d/) || t.match(/,\s*[A-Z]/)) &&
-          t.match(/[A-Za-z]{2,}/)
-        ) || null;
-
-        // Website detection
+        // Website check - look for non-google external links or website aria-label
         let hasWebsite = false;
-        card.querySelectorAll('a[href], button').forEach(el => {
-          const href = el.getAttribute('href') || '';
-          const label = (el.getAttribute('aria-label') || '').toLowerCase();
+        allLinks.forEach(a => {
+          const href = a.getAttribute('href') || '';
+          const label = (a.getAttribute('aria-label') || '').toLowerCase();
+          const dataVal = (a.getAttribute('data-value') || '').toLowerCase();
           if (
             label.includes('website') ||
-            href.includes('/url?') ||
-            href.includes('google.com/aclk') ||
-            (href.startsWith('http') && !href.includes('google.com'))
+            dataVal.includes('website') ||
+            href.includes('/url?q=') ||          // Google redirect to external site
+            href.includes('google.com/aclk') ||  // Ad click
+            (href.startsWith('http') && !href.includes('google.com') && !href.includes('maps/place'))
           ) {
             hasWebsite = true;
           }
         });
 
-        if (!hasWebsite) {
-          results.push({ name, address, phone, rating, reviews });
+        // Also check buttons for website indicator
+        card.querySelectorAll('button').forEach(btn => {
+          const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+          if (label.includes('website')) hasWebsite = true;
+        });
+
+        // Rating: find span with role="img" and aria-label containing stars
+        let rating = null;
+        card.querySelectorAll('span[role="img"]').forEach(el => {
+          const lbl = el.getAttribute('aria-label') || '';
+          const m = lbl.match(/(\d+\.?\d*)\s*star/i) || lbl.match(/^(\d+\.?\d*)$/);
+          if (m) rating = m[1];
+        });
+
+        // Reviews: find pattern like "(123)" or "123 reviews"
+        let reviews = null;
+        const cardText = card.textContent;
+        const reviewMatch = cardText.match(/\((\d[\d,]*)\)/);
+        if (reviewMatch) reviews = reviewMatch[1];
+
+        // Phone: look for tel: links first (most reliable)
+        let phone = null;
+        allLinks.forEach(a => {
+          const href = a.getAttribute('href') || '';
+          if (href.startsWith('tel:')) {
+            phone = href.replace('tel:', '').trim();
+          }
+        });
+        // Fallback: scan text for phone patterns
+        if (!phone) {
+          const phoneMatch = cardText.match(/(\+?[\d][\d\s\-().]{6,18}[\d])/);
+          if (phoneMatch) {
+            const candidate = phoneMatch[1].trim();
+            if (candidate.replace(/\D/g, '').length >= 7) phone = candidate;
+          }
         }
+
+        // Address: look for address-like text that isn't the name/phone/rating
+        let address = null;
+        const excludePatterns = [name, phone, rating, reviews].filter(Boolean);
+        
+        // Try to find text that looks like an address
+        const textNodes = Array.from(card.querySelectorAll('span, div'))
+          .filter(el => el.children.length === 0) // leaf nodes only
+          .map(el => el.textContent.trim())
+          .filter(t => {
+            if (t.length < 5 || t.length > 150) return false;
+            if (excludePatterns.some(p => t === p)) return false;
+            if (t.match(/^\d+\.?\d*$/)) return false; // pure number
+            if (t.match(/^\(\d+\)$/)) return false;   // review count
+            // Must look somewhat address-like
+            return t.match(/\d/) || t.match(/[A-Z][a-z]+.*[A-Z]/) || t.includes(',');
+          });
+
+        if (textNodes.length > 0) {
+          // Prefer text with numbers (street addresses)
+          address = textNodes.find(t => t.match(/^\d+\s+[A-Za-z]/) || t.match(/[A-Za-z]+.*,\s*[A-Za-z]/)) 
+                    || textNodes[0];
+        }
+
+        results.push({ name, address, phone, rating, reviews, hasWebsite });
+        console.log(`Card ${idx}: ${name} | website: ${hasWebsite} | phone: ${phone}`);
       } catch (err) {
-        console.error('Card error:', err.message);
+        console.error(`Card ${idx} error:`, err.message);
       }
     });
 
     return results;
   });
 
+  console.log(`Total extracted: ${businesses.length}`);
+  console.log(`With website: ${businesses.filter(b => b.hasWebsite).length}`);
+  console.log(`Without website: ${businesses.filter(b => !b.hasWebsite).length}`);
+
   await browser.close();
-  return businesses;
+
+  // Return ALL businesses but flag website status
+  // Filter to only those without websites
+  return businesses.filter(b => !b.hasWebsite).map(({ hasWebsite, ...b }) => b);
 }
 
 async function autoScroll(page, feedSelector) {
@@ -259,6 +248,50 @@ async function autoScroll(page, feedSelector) {
 
   await new Promise(r => setTimeout(r, 1500));
 }
+
+// Debug endpoint - returns ALL businesses (with and without websites)
+app.post('/api/scrape-gmb-debug', async (req, res) => {
+  try {
+    const { location, businessType } = req.body;
+    if (!location || !businessType) {
+      return res.status(400).json({ success: false, error: 'Location and business type are required' });
+    }
+
+    console.log(`\nDEBUG Searching: ${businessType} in ${location}`);
+    const browser = await puppeteer.launch(getPuppeteerConfig());
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    await page.setViewport({ width: 1440, height: 900 });
+
+    const searchQuery = encodeURIComponent(`${businessType} in ${location}`);
+    try {
+      await page.goto(`https://www.google.com/maps/search/${searchQuery}`, { waitUntil: 'networkidle2', timeout: 45000 });
+    } catch(e) {}
+
+    await page.waitForSelector('div[role="feed"]', { timeout: 15000 }).catch(() => {});
+    await autoScroll(page, 'div[role="feed"]');
+
+    const raw = await page.evaluate(() => {
+      const feed = document.querySelector('div[role="feed"]');
+      if (!feed) return [];
+      return Array.from(feed.children).map((card, i) => ({
+        index: i,
+        hasPlaceLink: !!card.querySelector('a[href*="/maps/place/"]'),
+        ariaLabel: card.querySelector('a[href*="/maps/place/"]')?.getAttribute('aria-label') || '',
+        links: Array.from(card.querySelectorAll('a[href]')).map(a => ({ 
+          href: a.getAttribute('href')?.slice(0, 120), 
+          label: a.getAttribute('aria-label')?.slice(0, 80) 
+        })),
+        text: card.textContent.slice(0, 300),
+      }));
+    });
+
+    await browser.close();
+    res.json({ success: true, count: raw.length, data: raw });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 app.post('/api/scrape-gmb', async (req, res) => {
   try {
