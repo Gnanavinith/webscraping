@@ -252,9 +252,8 @@ async function scrapeGoogleMaps(businessType, location) {
 
         console.log(`[${idx}] "${name}" | website:${hasWebsite} | phone:${phone} | addr:${address}`);
 
-        if (!hasWebsite) {
-          results.push({ name, address, phone, rating, reviews });
-        }
+        // Add all businesses (not just those without websites)
+        results.push({ name, address, phone, rating, reviews, hasWebsite });
       } catch (err) {
         console.error(`Card ${idx} error:`, err.message);
       }
