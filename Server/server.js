@@ -35,12 +35,103 @@ app.use(limiter);
 app.use(cors());
 app.use(express.json());
 
+// ── Scrape phone from individual listing page ────────────────────────────────
+async function scrapePhoneFromListing(browser, placeUrl) {
+  const page = await browser.newPage();
+  try {
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const type = req.resourceType();
+      if (['image', 'stylesheet', 'font', 'media'].includes(type)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    );
+    await page.setViewport({ width: 1440, height: 900 });
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+
+    try {
+      await page.goto(placeUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    } catch (e) {
+      console.log('Listing page timeout — continuing:', e.message);
+    }
+
+    // Wait a moment for dynamic content
+    await new Promise(r => setTimeout(r, 1500));
+
+    const phone = await page.evaluate(() => {
+      // Strategy 1: tel: link (most reliable)
+      const telLink = document.querySelector('a[href^="tel:"]');
+      if (telLink) {
+        return telLink.getAttribute('href').replace('tel:', '').trim();
+      }
+
+      // Strategy 2: aria-label on buttons containing phone digits
+      const buttons = Array.from(document.querySelectorAll('button[aria-label], a[aria-label]'));
+      for (const btn of buttons) {
+        const label = btn.getAttribute('aria-label') || '';
+        // Indian: 10-digit starting with 6-9, or +91 prefix
+        const indMatch = label.match(/(\+91[\s\-]?[6-9]\d{9}|\b[6-9]\d{9}\b)/);
+        if (indMatch) return indMatch[1];
+        // International: (XXX) XXX-XXXX or XXX-XXX-XXXX
+        const intMatch = label.match(/(\+?1?[\s\-\.]?\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4})/);
+        if (intMatch) return intMatch[1].trim();
+      }
+
+      // Strategy 3: scan full page text for phone patterns
+      const bodyText = document.body.innerText;
+      const patterns = [
+        /\+91[\s\-]?[6-9]\d{9}/,
+        /\b[6-9]\d{9}\b/,
+        /\+?1?[\s\-\.]?\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4}/,
+        /\b\d{3}[\s\-\.]\d{3}[\s\-\.]\d{4}\b/,
+      ];
+      for (const pattern of patterns) {
+        const m = bodyText.match(pattern);
+        if (m) return m[0].trim();
+      }
+
+      return null;
+    });
+
+    return phone;
+  } catch (err) {
+    console.error('Error scraping listing page:', err.message);
+    return null;
+  } finally {
+    await page.close();
+  }
+}
+
+// ── Run N async tasks with concurrency limit ─────────────────────────────────
+async function runWithConcurrency(tasks, concurrency) {
+  const results = new Array(tasks.length);
+  let index = 0;
+
+  async function worker() {
+    while (index < tasks.length) {
+      const i = index++;
+      results[i] = await tasks[i]();
+    }
+  }
+
+  const workers = Array.from({ length: concurrency }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
+// ── Main scraper ─────────────────────────────────────────────────────────────
 async function scrapeGoogleMaps(businessType, location) {
   console.log('Launching Puppeteer...');
   const browser = await puppeteer.launch(getPuppeteerConfig());
   const page = await browser.newPage();
 
-  // Block unnecessary resources — speeds up by 40-60%
+  // Block unnecessary resources
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     const type = req.resourceType();
@@ -94,55 +185,21 @@ async function scrapeGoogleMaps(businessType, location) {
   await autoScroll(page, feedSelector);
   await new Promise(r => setTimeout(r, 800));
 
-  // Debug: log first FEW cards to help diagnose extraction issues
-  const debugInfo = await page.evaluate(() => {
-    const feed = document.querySelector('div[role="feed"]');
-    if (!feed) return null;
-    
-    const allChildren = Array.from(feed.children);
-    console.log(`Feed has ${allChildren.length} children`);
-    
-    // Find first few cards that have place links
-    const validCards = allChildren.filter(child => 
-      child.querySelector('a[href*="/maps/place/"]')
-    ).slice(0, 2);
-    
-    return validCards.map((card, i) => ({
-      index: i,
-      text: card.textContent.slice(0, 400),
-      telLinks: Array.from(card.querySelectorAll('a[href^="tel:"]')).map(a => a.href),
-      placeLinks: Array.from(card.querySelectorAll('a[href*="/maps/place/"]')).map(a => a.href),
-      hasHeading: !!card.querySelector('[role="heading"]'),
-    }));
-  });
-  
-  if (debugInfo) {
-    console.log('\n=== DEBUG INFO ===');
-    debugInfo.forEach(info => {
-      console.log(`\nCard ${info.index}:`);
-      console.log('Text:', info.text);
-      console.log('Has heading:', info.hasHeading);
-      console.log('Place links:', info.placeLinks);
-      console.log('Tel links:', info.telLinks);
-    });
-    console.log('==================\n');
-  }
-
-  const businesses = await page.evaluate(() => {
+  // Extract basic info + place URLs from the feed
+  const rawBusinesses = await page.evaluate(() => {
     const results = [];
     const feed = document.querySelector('div[role="feed"]');
     if (!feed) return results;
 
     const seenNames = new Set();
     const cards = Array.from(feed.children);
-    console.log(`Total cards: ${cards.length}`);
 
     cards.forEach((card, idx) => {
       try {
         const placeLink = card.querySelector('a[href*="/maps/place/"]');
         if (!placeLink) return;
 
-        // ── Name ────────────────────────────────────────────────────────
+        // Name
         let name = placeLink.getAttribute('aria-label') || '';
         if (!name) {
           const heading = card.querySelector('[role="heading"]');
@@ -154,90 +211,43 @@ async function scrapeGoogleMaps(businessType, location) {
 
         const cardText = card.textContent;
 
-        // ── Website detection (STRICT) ──────────────────────────────────
-        // Google Maps only shows a "Website" button/link when a business
-        // has a registered website. We check for that exact signal only.
+        // Website detection
         let hasWebsite = false;
-
-        // 1. aria-label on anchors containing "website"
         card.querySelectorAll('a').forEach(a => {
-          const label = (a.getAttribute('aria-label') || '').toLowerCase();
-          if (label.includes('website')) hasWebsite = true;
+          if ((a.getAttribute('aria-label') || '').toLowerCase().includes('website')) hasWebsite = true;
         });
-
-        // 2. aria-label on buttons containing "website"
         if (!hasWebsite) {
           card.querySelectorAll('button').forEach(btn => {
-            const label = (btn.getAttribute('aria-label') || '').toLowerCase();
-            if (label.includes('website')) hasWebsite = true;
+            if ((btn.getAttribute('aria-label') || '').toLowerCase().includes('website')) hasWebsite = true;
           });
         }
-
-        // 3. Google redirect links to external sites (/url?q=http...)
         if (!hasWebsite) {
           card.querySelectorAll('a[href]').forEach(a => {
-            const href = a.getAttribute('href') || '';
-            if (href.match(/\/url\?.*q=http/i)) hasWebsite = true;
+            if ((a.getAttribute('href') || '').match(/\/url\?.*q=http/i)) hasWebsite = true;
           });
         }
+        if (!hasWebsite && cardText.includes('Website')) hasWebsite = true;
 
-        // 4. Card text contains the word "Website" as a button label
-        if (!hasWebsite && cardText.includes('Website')) {
-          hasWebsite = true;
-        }
-
-        // ── Rating ──────────────────────────────────────────────────────
+        // Rating
         let rating = null;
         card.querySelectorAll('span[role="img"]').forEach(el => {
-          const lbl = el.getAttribute('aria-label') || '';
-          const m = lbl.match(/(\d+\.?\d*)\s*star/i);
+          const m = (el.getAttribute('aria-label') || '').match(/(\d+\.?\d*)\s*star/i);
           if (m) rating = m[1];
         });
 
-        // ── Reviews ─────────────────────────────────────────────────────
+        // Reviews
         let reviews = null;
         const reviewMatch = cardText.match(/\(([\d,]+)\)/);
         if (reviewMatch) reviews = reviewMatch[1];
 
-        // ── Phone ────────────────────────────────────────────────────────
-        let phone = null;
-
-        // First try tel: links (most reliable)
-        const telLink = card.querySelector('a[href^="tel:"]');
-        if (telLink) {
-          phone = telLink.getAttribute('href').replace('tel:', '').trim();
-        }
-
-        // Fallback: extract from card text using regex patterns
-        if (!phone) {
-          const phonePatterns = [
-            // Indian formats
-            /\+91[\s\-]?[6-9]\d{9}/,           // +91 9876543210
-            /\b91[6-9]\d{9}\b/,                  // 919876543210
-            /\b0[6-9]\d{9}\b/,                   // 09876543210
-            /\b[6-9]\d{9}\b/,                    // 9876543210 (10-digit Indian mobile)
-            // US / international formats
-            /\+?1?[\s\-\.]?\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4}/,  // (801) 423-1345
-            /\b\d{3}[\s\-\.]\d{3}[\s\-\.]\d{4}\b/,                    // 801-423-1345
-          ];
-
-          for (const pattern of phonePatterns) {
-            const m = cardText.match(pattern);
-            if (m) {
-              phone = m[0].trim();
-              break;
-            }
-          }
-        }
-
-        // ── Address ──────────────────────────────────────────────────────
+        // Address
         let address = null;
         const leafTexts = Array.from(card.querySelectorAll('span'))
           .filter(el => el.children.length === 0)
           .map(el => el.textContent.trim())
           .filter(t => {
             if (!t || t.length < 5 || t.length > 150) return false;
-            if (t === name || t === phone || t === rating) return false;
+            if (t === name || t === rating) return false;
             if (t.match(/^\d+\.?\d*$/) || t.match(/^\([\d,]+\)$/)) return false;
             if (t.match(/^(Open|Closed|Directions|Website|Call|Share|Save)/i)) return false;
             return true;
@@ -250,10 +260,10 @@ async function scrapeGoogleMaps(businessType, location) {
           t.match(/[A-Za-z]{3,}/) && t.length > 8
         ) || null;
 
-        console.log(`[${idx}] "${name}" | website:${hasWebsite} | phone:${phone} | addr:${address}`);
+        // Place URL for detail scraping
+        const placeUrl = placeLink.href;
 
-        // Add all businesses (not just those without websites)
-        results.push({ name, address, phone, rating, reviews, hasWebsite });
+        results.push({ name, address, rating, reviews, hasWebsite, placeUrl });
       } catch (err) {
         console.error(`Card ${idx} error:`, err.message);
       }
@@ -262,11 +272,24 @@ async function scrapeGoogleMaps(businessType, location) {
     return results;
   });
 
-  console.log(`\nTotal without websites: ${businesses.length}`);
+  console.log(`\nFound ${rawBusinesses.length} businesses in feed. Now scraping phone numbers...`);
+
+  // Scrape phones from individual listing pages (concurrency = 4)
+  const tasks = rawBusinesses.map(biz => async () => {
+    console.log(`Fetching phone for: ${biz.name}`);
+    const phone = await scrapePhoneFromListing(browser, biz.placeUrl);
+    console.log(`  → ${phone || 'not found'}`);
+    return { ...biz, phone, placeUrl: undefined }; // remove placeUrl from output
+  });
+
+  const businesses = await runWithConcurrency(tasks, 4);
+
+  console.log(`\nDone. Total businesses: ${businesses.length}`);
   await browser.close();
   return businesses;
 }
 
+// ── Auto-scroll feed ─────────────────────────────────────────────────────────
 async function autoScroll(page, feedSelector) {
   await page.evaluate(async (selector) => {
     const feed = document.querySelector(selector);
@@ -294,7 +317,7 @@ async function autoScroll(page, feedSelector) {
   await new Promise(r => setTimeout(r, 800));
 }
 
-// ── Debug endpoint: inspect raw card data ───────────────────────────────────
+// ── Debug endpoint ────────────────────────────────────────────────────────────
 app.post('/api/debug', async (req, res) => {
   try {
     const { location, businessType } = req.body;
@@ -332,7 +355,7 @@ app.post('/api/debug', async (req, res) => {
   }
 });
 
-// ── Main scrape endpoint ─────────────────────────────────────────────────────
+// ── Main scrape endpoint ──────────────────────────────────────────────────────
 app.post('/api/scrape-gmb', async (req, res) => {
   try {
     const { location, businessType } = req.body;
