@@ -40,12 +40,12 @@ async function scrapeGoogleMaps(businessType, location) {
   const browser = await puppeteer.launch(getPuppeteerConfig());
   const page = await browser.newPage();
 
-  // Block unnecessary resources (images, CSS, fonts) - speeds up by 40-60%
+  // Block unnecessary resources — speeds up by 40-60%
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     const type = req.resourceType();
     if (['image', 'stylesheet', 'font', 'media'].includes(type)) {
-      req.abort(); // don't load images, CSS, fonts
+      req.abort();
     } else {
       req.continue();
     }
@@ -72,11 +72,12 @@ async function scrapeGoogleMaps(businessType, location) {
     console.log('Navigation timeout — continuing:', e.message);
   }
 
+  // Dismiss consent screen if present
   try {
     const consentBtn = await page.$('button[aria-label*="Accept"], form[action*="consent"] button');
     if (consentBtn) {
       await consentBtn.click();
-      await new Promise(r => setTimeout(r, 1000)); // Reduced from 2000ms
+      await new Promise(r => setTimeout(r, 1000));
     }
   } catch (e) {}
 
@@ -91,9 +92,9 @@ async function scrapeGoogleMaps(businessType, location) {
   }
 
   await autoScroll(page, feedSelector);
-  await new Promise(r => setTimeout(r, 800)); // Reduced from 2000ms
+  await new Promise(r => setTimeout(r, 800));
 
-  // DEBUG: Log a sample card to see phone format
+  // Debug: log first card to help diagnose extraction issues
   const debugInfo = await page.evaluate(() => {
     const feed = document.querySelector('div[role="feed"]');
     if (!feed || !feed.children[0]) return null;
@@ -101,10 +102,6 @@ async function scrapeGoogleMaps(businessType, location) {
     return {
       fullText: firstCard.textContent.slice(0, 500),
       telLinks: Array.from(firstCard.querySelectorAll('a[href^="tel:"]')).map(a => a.href),
-      allLinks: Array.from(firstCard.querySelectorAll('a')).map(a => ({ 
-        href: a.href, 
-        text: a.textContent.slice(0, 50) 
-      })).slice(0, 10)
     };
   });
   if (debugInfo) {
@@ -126,7 +123,7 @@ async function scrapeGoogleMaps(businessType, location) {
         const placeLink = card.querySelector('a[href*="/maps/place/"]');
         if (!placeLink) return;
 
-        // Name
+        // ── Name ────────────────────────────────────────────────────────
         let name = placeLink.getAttribute('aria-label') || '';
         if (!name) {
           const heading = card.querySelector('[role="heading"]');
@@ -136,18 +133,20 @@ async function scrapeGoogleMaps(businessType, location) {
         if (!name || name.length < 2 || seenNames.has(name)) return;
         seenNames.add(name);
 
+        const cardText = card.textContent;
+
         // ── Website detection (STRICT) ──────────────────────────────────
-        // Google Maps only adds a "Website" button when the business has one.
-        // We check aria-labels on anchors and buttons for the exact word "website".
+        // Google Maps only shows a "Website" button/link when a business
+        // has a registered website. We check for that exact signal only.
         let hasWebsite = false;
 
-        // Check anchor aria-labels
+        // 1. aria-label on anchors containing "website"
         card.querySelectorAll('a').forEach(a => {
           const label = (a.getAttribute('aria-label') || '').toLowerCase();
           if (label.includes('website')) hasWebsite = true;
         });
 
-        // Check button aria-labels
+        // 2. aria-label on buttons containing "website"
         if (!hasWebsite) {
           card.querySelectorAll('button').forEach(btn => {
             const label = (btn.getAttribute('aria-label') || '').toLowerCase();
@@ -155,13 +154,17 @@ async function scrapeGoogleMaps(businessType, location) {
           });
         }
 
-        // Check for Google's external redirect links (/url?q=http...)
-        // This is how Maps links to business websites
+        // 3. Google redirect links to external sites (/url?q=http...)
         if (!hasWebsite) {
           card.querySelectorAll('a[href]').forEach(a => {
             const href = a.getAttribute('href') || '';
             if (href.match(/\/url\?.*q=http/i)) hasWebsite = true;
           });
+        }
+
+        // 4. Card text contains the word "Website" as a button label
+        if (!hasWebsite && cardText.includes('Website')) {
+          hasWebsite = true;
         }
 
         // ── Rating ──────────────────────────────────────────────────────
@@ -174,34 +177,39 @@ async function scrapeGoogleMaps(businessType, location) {
 
         // ── Reviews ─────────────────────────────────────────────────────
         let reviews = null;
-        const cardText = card.textContent;
         const reviewMatch = cardText.match(/\(([\d,]+)\)/);
         if (reviewMatch) reviews = reviewMatch[1];
 
-       
-      // ── Phone ────────────────────────────────────────────────────────
-let phone = null;
-const telLink = card.querySelector('a[href^="tel:"]');
-if (telLink) {
-  phone = telLink.getAttribute('href').replace('tel:', '').trim();
-}
+        // ── Phone ────────────────────────────────────────────────────────
+        let phone = null;
 
-if (!phone) {
-  const phonePatterns = [
-    /\+?1?[\s\-\.]?\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4}/,  // (801) 423-1345
-    /\+91[\s\-]?[6-9]\d{9}/,   // Indian +91
-    /\b[6-9]\d{9}\b/,           // Indian 10-digit mobile
-    /\b0\d{10}\b/,              // Indian with leading 0
-  ];
+        // First try tel: links (most reliable)
+        const telLink = card.querySelector('a[href^="tel:"]');
+        if (telLink) {
+          phone = telLink.getAttribute('href').replace('tel:', '').trim();
+        }
 
-  for (const pattern of phonePatterns) {
-    const m = cardText.match(pattern);
-    if (m) {
-      phone = m[0].trim();
-      break;
-    }
-  }
-}
+        // Fallback: extract from card text using regex patterns
+        if (!phone) {
+          const phonePatterns = [
+            // Indian formats
+            /\+91[\s\-]?[6-9]\d{9}/,           // +91 9876543210
+            /\b91[6-9]\d{9}\b/,                  // 919876543210
+            /\b0[6-9]\d{9}\b/,                   // 09876543210
+            /\b[6-9]\d{9}\b/,                    // 9876543210 (10-digit Indian mobile)
+            // US / international formats
+            /\+?1?[\s\-\.]?\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4}/,  // (801) 423-1345
+            /\b\d{3}[\s\-\.]\d{3}[\s\-\.]\d{4}\b/,                    // 801-423-1345
+          ];
+
+          for (const pattern of phonePatterns) {
+            const m = cardText.match(pattern);
+            if (m) {
+              phone = m[0].trim();
+              break;
+            }
+          }
+        }
 
         // ── Address ──────────────────────────────────────────────────────
         let address = null;
@@ -212,15 +220,18 @@ if (!phone) {
             if (!t || t.length < 5 || t.length > 150) return false;
             if (t === name || t === phone || t === rating) return false;
             if (t.match(/^\d+\.?\d*$/) || t.match(/^\([\d,]+\)$/)) return false;
+            if (t.match(/^(Open|Closed|Directions|Website|Call|Share|Save)/i)) return false;
             return true;
           });
 
         address = leafTexts.find(t =>
           t.match(/^\d+\s+[A-Za-z]/) ||
           (t.includes(',') && t.match(/[A-Za-z]{2,}/))
+        ) || leafTexts.find(t =>
+          t.match(/[A-Za-z]{3,}/) && t.length > 8
         ) || null;
 
-        console.log(`[${idx}] "${name}" | hasWebsite:${hasWebsite} | phone:${phone}`);
+        console.log(`[${idx}] "${name}" | website:${hasWebsite} | phone:${phone} | addr:${address}`);
 
         if (!hasWebsite) {
           results.push({ name, address, phone, rating, reviews });
@@ -233,7 +244,7 @@ if (!phone) {
     return results;
   });
 
-  console.log(`\nResult: ${businesses.length} businesses without websites`);
+  console.log(`\nTotal without websites: ${businesses.length}`);
   await browser.close();
   return businesses;
 }
@@ -257,12 +268,12 @@ async function autoScroll(page, feedSelector) {
           sameCount = 0;
           lastHeight = newHeight;
         }
-      }, 400); // Reduced from 700ms
-      setTimeout(() => { clearInterval(timer); resolve(); }, 15000); // Reduced from 25000ms
+      }, 400);
+      setTimeout(() => { clearInterval(timer); resolve(); }, 15000);
     });
   }, feedSelector);
 
-  await new Promise(r => setTimeout(r, 800)); // Reduced from 1500ms
+  await new Promise(r => setTimeout(r, 800));
 }
 
 // ── Debug endpoint: inspect raw card data ───────────────────────────────────
@@ -275,7 +286,9 @@ app.post('/api/debug', async (req, res) => {
     await page.setViewport({ width: 1440, height: 900 });
 
     const q = encodeURIComponent(`${businessType} in ${location}`);
-    try { await page.goto(`https://www.google.com/maps/search/${q}`, { waitUntil: 'networkidle2', timeout: 45000 }); } catch(e) {}
+    try {
+      await page.goto(`https://www.google.com/maps/search/${q}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    } catch(e) {}
     await page.waitForSelector('div[role="feed"]', { timeout: 15000 }).catch(() => {});
     await autoScroll(page, 'div[role="feed"]');
 
@@ -290,7 +303,7 @@ app.post('/api/debug', async (req, res) => {
           label: a.getAttribute('aria-label') || ''
         })),
         buttons: Array.from(card.querySelectorAll('button')).map(b => b.getAttribute('aria-label') || ''),
-        text: card.textContent.slice(0, 300),
+        text: card.textContent.slice(0, 400),
       }));
     });
 
@@ -301,6 +314,7 @@ app.post('/api/debug', async (req, res) => {
   }
 });
 
+// ── Main scrape endpoint ─────────────────────────────────────────────────────
 app.post('/api/scrape-gmb', async (req, res) => {
   try {
     const { location, businessType } = req.body;
