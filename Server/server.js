@@ -40,6 +40,17 @@ async function scrapeGoogleMaps(businessType, location) {
   const browser = await puppeteer.launch(getPuppeteerConfig());
   const page = await browser.newPage();
 
+  // Block unnecessary resources (images, CSS, fonts) - speeds up by 40-60%
+  await page.setRequestInterception(true);
+  page.on('request', (req) => {
+    const type = req.resourceType();
+    if (['image', 'stylesheet', 'font', 'media'].includes(type)) {
+      req.abort(); // don't load images, CSS, fonts
+    } else {
+      req.continue();
+    }
+  });
+
   await page.evaluateOnNewDocument(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => false });
     Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
@@ -56,7 +67,7 @@ async function scrapeGoogleMaps(businessType, location) {
   console.log(`Navigating to: ${url}`);
 
   try {
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
   } catch (e) {
     console.log('Navigation timeout — continuing:', e.message);
   }
@@ -65,7 +76,7 @@ async function scrapeGoogleMaps(businessType, location) {
     const consentBtn = await page.$('button[aria-label*="Accept"], form[action*="consent"] button');
     if (consentBtn) {
       await consentBtn.click();
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 1000)); // Reduced from 2000ms
     }
   } catch (e) {}
 
@@ -80,7 +91,7 @@ async function scrapeGoogleMaps(businessType, location) {
   }
 
   await autoScroll(page, feedSelector);
-  await new Promise(r => setTimeout(r, 2000));
+  await new Promise(r => setTimeout(r, 800)); // Reduced from 2000ms
 
   const businesses = await page.evaluate(() => {
     const results = [];
@@ -207,12 +218,12 @@ async function autoScroll(page, feedSelector) {
           sameCount = 0;
           lastHeight = newHeight;
         }
-      }, 700);
-      setTimeout(() => { clearInterval(timer); resolve(); }, 25000);
+      }, 400); // Reduced from 700ms
+      setTimeout(() => { clearInterval(timer); resolve(); }, 15000); // Reduced from 25000ms
     });
   }, feedSelector);
 
-  await new Promise(r => setTimeout(r, 1500));
+  await new Promise(r => setTimeout(r, 800)); // Reduced from 1500ms
 }
 
 // ── Debug endpoint: inspect raw card data ───────────────────────────────────

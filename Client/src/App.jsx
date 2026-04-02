@@ -365,7 +365,7 @@ export default function App() {
     setSearched(true)
 
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 60000) // 60 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 120000) // 120 second timeout
 
     try {
       console.log('Starting search for:', { location, businessType })
