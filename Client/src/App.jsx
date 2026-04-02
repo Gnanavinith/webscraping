@@ -14,7 +14,7 @@ const STYLES = `
   }
 
   .root {
-    max-width: 1000px;
+    max-width: 1400px;
     margin: 0 auto;
     padding: 2rem 1.5rem 4rem;
   }
@@ -238,6 +238,7 @@ const STYLES = `
     width: 100%;
     border-collapse: collapse;
     font-size: 0.78rem;
+    min-width: 900px;
   }
 
   thead tr {
@@ -274,12 +275,20 @@ const STYLES = `
   .td-name {
     color: #e8e4d9;
     font-weight: 500;
-    min-width: 160px;
+    min-width: 200px;
   }
 
-  .td-addr { color: #666; max-width: 220px; }
+  .td-addr { 
+    color: #666; 
+    max-width: 300px;
+    word-wrap: break-word;
+  }
 
-  .td-phone { white-space: nowrap; color: #888; }
+  .td-phone { 
+    white-space: normal; 
+    color: #888;
+    min-width: 140px;
+  }
 
   .td-rating {
     white-space: nowrap;
@@ -309,8 +318,28 @@ const STYLES = `
     transition: background 0.2s, transform 0.15s;
   }
 
-  .whatsapp-btn:hover {
-    background: #20BA5A;
+  .whatsapp-btn-container {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .whatsapp-btn-tanglome {
+    background: linear-gradient(135deg, #25D366 0%, #128C7E 100%);
+  }
+
+  .whatsapp-btn-tanglome:hover {
+    background: linear-gradient(135deg, #20BA5A 0%, #0F7A6E 100%);
+    transform: translateY(-1px);
+  }
+
+  .whatsapp-btn-zeonhub {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  }
+
+  .whatsapp-btn-zeonhub:hover {
+    background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
     transform: translateY(-1px);
   }
 

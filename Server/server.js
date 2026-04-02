@@ -164,6 +164,25 @@ async function scrapeGoogleMaps(businessType, location) {
         const telLink = card.querySelector('a[href^="tel:"]');
         if (telLink) phone = telLink.getAttribute('href').replace('tel:', '').trim();
 
+        // Fallback: extract phone from text if no tel: link found
+        if (!phone) {
+          const cardText = card.textContent;
+          // Indian phone patterns: 10 digits, or with +91 / 91 prefix
+          const phonePatterns = [
+            /(?:\+91|91)[\s\-]?[6-9]\d{9}/,  // Indian mobile with country code
+            /[6-9]\d{2}[\s\-]?\d{3}[\s\-]?\d{4}/,  // Indian mobile 10 digits
+            /\d{3}[\s\-]\d{3}[\s\-]\d{4}/,    // US format
+            /\(\d{3}\)[\s\-]?\d{3}[\s\-]\d{4}/ // (123) 456-7890
+          ];
+          for (const pattern of phonePatterns) {
+            const m = cardText.match(pattern);
+            if (m) {
+              phone = m[0].replace(/[\s\-]/g, '').trim();
+              break;
+            }
+          }
+        }
+
         // ── Address ──────────────────────────────────────────────────────
         let address = null;
         const leafTexts = Array.from(card.querySelectorAll('span'))

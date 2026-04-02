@@ -19,11 +19,11 @@ export default function ResultsTable({ results }) {
             <tr key={i}>
               <td className="td-name">{biz.name || <span className="no-data">—</span>}</td>
               <td className="td-addr">{biz.address !== 'N/A' ? biz.address : <span className="no-data">—</span>}</td>
-              <td className="td-phone">{biz.phone !== 'No phone' ? biz.phone : <span className="no-data">—</span>}</td>
+              <td className="td-phone">{biz.phone ? biz.phone : <span className="no-data">—</span>}</td>
               <td className="td-rating">{biz.rating !== 'N/A' ? biz.rating : <span className="no-data">—</span>}</td>
               <td className="td-reviews">{biz.reviews !== 'N/A' ? biz.reviews : <span className="no-data">—</span>}</td>
               <td className="td-action">
-                {biz.phone !== 'No phone' ? (
+                {biz.phone ? (
                   <WhatsAppButton 
                     phone={biz.phone} 
                     businessName={biz.name || 'Business Owner'} 
