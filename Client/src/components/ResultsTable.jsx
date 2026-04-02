@@ -17,16 +17,26 @@ export default function ResultsTable({ results }) {
         <tbody>
           {results.map((biz, i) => (
             <tr key={i}>
-              <td className="td-name">{biz.name || <span className="no-data">—</span>}</td>
-              <td className="td-addr">{biz.address !== 'N/A' ? biz.address : <span className="no-data">—</span>}</td>
-              <td className="td-phone">{biz.phone ? biz.phone : <span className="no-data">—</span>}</td>
-              <td className="td-rating">{biz.rating !== 'N/A' ? biz.rating : <span className="no-data">—</span>}</td>
-              <td className="td-reviews">{biz.reviews !== 'N/A' ? biz.reviews : <span className="no-data">—</span>}</td>
-              <td className="td-action">
+              <td className="td-name" data-label="Business">
+                {biz.name || <span className="no-data">—</span>}
+              </td>
+              <td className="td-addr" data-label="Address">
+                {biz.address ? biz.address : <span className="no-data">—</span>}
+              </td>
+              <td className="td-phone" data-label="Phone">
+                {biz.phone ? biz.phone : <span className="no-data">—</span>}
+              </td>
+              <td className="td-rating" data-label="Rating">
+                {biz.rating ? `★ ${biz.rating}` : <span className="no-data">—</span>}
+              </td>
+              <td className="td-reviews" data-label="Reviews">
+                {biz.reviews ? biz.reviews : <span className="no-data">—</span>}
+              </td>
+              <td className="td-action" data-label="Contact">
                 {biz.phone ? (
-                  <WhatsAppButton 
-                    phone={biz.phone} 
-                    businessName={biz.name || 'Business Owner'} 
+                  <WhatsAppButton
+                    phone={biz.phone}
+                    businessName={biz.name || 'Business Owner'}
                   />
                 ) : (
                   <span className="no-phone-msg">No phone</span>

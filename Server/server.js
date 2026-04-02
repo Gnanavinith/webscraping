@@ -94,19 +94,38 @@ async function scrapeGoogleMaps(businessType, location) {
   await autoScroll(page, feedSelector);
   await new Promise(r => setTimeout(r, 800));
 
-  // Debug: log first card to help diagnose extraction issues
+  // Debug: log first FEW cards to help diagnose extraction issues
   const debugInfo = await page.evaluate(() => {
     const feed = document.querySelector('div[role="feed"]');
-    if (!feed || !feed.children[0]) return null;
-    const firstCard = feed.children[0];
-    return {
-      fullText: firstCard.textContent.slice(0, 500),
-      telLinks: Array.from(firstCard.querySelectorAll('a[href^="tel:"]')).map(a => a.href),
-    };
+    if (!feed) return null;
+    
+    const allChildren = Array.from(feed.children);
+    console.log(`Feed has ${allChildren.length} children`);
+    
+    // Find first few cards that have place links
+    const validCards = allChildren.filter(child => 
+      child.querySelector('a[href*="/maps/place/"]')
+    ).slice(0, 2);
+    
+    return validCards.map((card, i) => ({
+      index: i,
+      text: card.textContent.slice(0, 400),
+      telLinks: Array.from(card.querySelectorAll('a[href^="tel:"]')).map(a => a.href),
+      placeLinks: Array.from(card.querySelectorAll('a[href*="/maps/place/"]')).map(a => a.href),
+      hasHeading: !!card.querySelector('[role="heading"]'),
+    }));
   });
+  
   if (debugInfo) {
-    console.log('DEBUG - First card text:', debugInfo.fullText);
-    console.log('DEBUG - Tel links:', debugInfo.telLinks);
+    console.log('\n=== DEBUG INFO ===');
+    debugInfo.forEach(info => {
+      console.log(`\nCard ${info.index}:`);
+      console.log('Text:', info.text);
+      console.log('Has heading:', info.hasHeading);
+      console.log('Place links:', info.placeLinks);
+      console.log('Tel links:', info.telLinks);
+    });
+    console.log('==================\n');
   }
 
   const businesses = await page.evaluate(() => {
