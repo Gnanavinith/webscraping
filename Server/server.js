@@ -93,6 +93,25 @@ async function scrapeGoogleMaps(businessType, location) {
   await autoScroll(page, feedSelector);
   await new Promise(r => setTimeout(r, 800)); // Reduced from 2000ms
 
+  // DEBUG: Log a sample card to see phone format
+  const debugInfo = await page.evaluate(() => {
+    const feed = document.querySelector('div[role="feed"]');
+    if (!feed || !feed.children[0]) return null;
+    const firstCard = feed.children[0];
+    return {
+      fullText: firstCard.textContent.slice(0, 500),
+      telLinks: Array.from(firstCard.querySelectorAll('a[href^="tel:"]')).map(a => a.href),
+      allLinks: Array.from(firstCard.querySelectorAll('a')).map(a => ({ 
+        href: a.href, 
+        text: a.textContent.slice(0, 50) 
+      })).slice(0, 10)
+    };
+  });
+  if (debugInfo) {
+    console.log('DEBUG - First card text:', debugInfo.fullText);
+    console.log('DEBUG - Tel links:', debugInfo.telLinks);
+  }
+
   const businesses = await page.evaluate(() => {
     const results = [];
     const feed = document.querySelector('div[role="feed"]');
@@ -162,22 +181,27 @@ async function scrapeGoogleMaps(businessType, location) {
         // ── Phone ────────────────────────────────────────────────────────
         let phone = null;
         const telLink = card.querySelector('a[href^="tel:"]');
-        if (telLink) phone = telLink.getAttribute('href').replace('tel:', '').trim();
+        if (telLink) {
+          phone = telLink.getAttribute('href').replace('tel:', '').trim();
+          console.log(`Found phone via tel: ${phone}`);
+        }
 
         // Fallback: extract phone from text if no tel: link found
         if (!phone) {
           const cardText = card.textContent;
-          // Indian phone patterns: 10 digits, or with +91 / 91 prefix
+          // More comprehensive phone patterns
           const phonePatterns = [
-            /(?:\+91|91)[\s\-]?[6-9]\d{9}/,  // Indian mobile with country code
-            /[6-9]\d{2}[\s\-]?\d{3}[\s\-]?\d{4}/,  // Indian mobile 10 digits
-            /\d{3}[\s\-]\d{3}[\s\-]\d{4}/,    // US format
-            /\(\d{3}\)[\s\-]?\d{3}[\s\-]\d{4}/ // (123) 456-7890
+            /\+1\s*\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{4}/,  // +1 (xxx) xxx-xxxx
+            /\(\d{3}\)[\s\-]\d{3}[\s\-]\d{4}/,             // (xxx) xxx-xxxx
+            /\d{3}[\s\-\.]\d{3}[\s\-\.]\d{4}/,              // xxx-xxx-xxxx or xxx.xxx.xxxx
+            /\b\d{3}\d{3}\d{4}\b/,                           // xxxxxxxxxx (10 digits)
           ];
+          
           for (const pattern of phonePatterns) {
             const m = cardText.match(pattern);
             if (m) {
-              phone = m[0].replace(/[\s\-]/g, '').trim();
+              phone = m[0].replace(/[\s\-\(\)\.]/g, '').trim();
+              console.log(`Found phone via regex: ${phone}`);
               break;
             }
           }
