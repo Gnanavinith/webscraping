@@ -398,7 +398,7 @@ export default function App() {
 
     try {
       console.log('Starting search for:', { location, businessType })
-      const res = await fetch('http://localhost:3000/api/scrape-gmb', {
+      const res = await fetch('https://webscraping-a1ky.onrender.com/api/scrape-gmb', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ location, businessType }),
