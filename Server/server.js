@@ -178,34 +178,30 @@ async function scrapeGoogleMaps(businessType, location) {
         const reviewMatch = cardText.match(/\(([\d,]+)\)/);
         if (reviewMatch) reviews = reviewMatch[1];
 
-        // ── Phone ────────────────────────────────────────────────────────
-        let phone = null;
-        const telLink = card.querySelector('a[href^="tel:"]');
-        if (telLink) {
-          phone = telLink.getAttribute('href').replace('tel:', '').trim();
-          console.log(`Found phone via tel: ${phone}`);
-        }
+       
+      // ── Phone ────────────────────────────────────────────────────────
+let phone = null;
+const telLink = card.querySelector('a[href^="tel:"]');
+if (telLink) {
+  phone = telLink.getAttribute('href').replace('tel:', '').trim();
+}
 
-        // Fallback: extract phone from text if no tel: link found
-        if (!phone) {
-          const cardText = card.textContent;
-          // More comprehensive phone patterns
-          const phonePatterns = [
-            /\+1\s*\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{4}/,  // +1 (xxx) xxx-xxxx
-            /\(\d{3}\)[\s\-]\d{3}[\s\-]\d{4}/,             // (xxx) xxx-xxxx
-            /\d{3}[\s\-\.]\d{3}[\s\-\.]\d{4}/,              // xxx-xxx-xxxx or xxx.xxx.xxxx
-            /\b\d{3}\d{3}\d{4}\b/,                           // xxxxxxxxxx (10 digits)
-          ];
-          
-          for (const pattern of phonePatterns) {
-            const m = cardText.match(pattern);
-            if (m) {
-              phone = m[0].replace(/[\s\-\(\)\.]/g, '').trim();
-              console.log(`Found phone via regex: ${phone}`);
-              break;
-            }
-          }
-        }
+if (!phone) {
+  const phonePatterns = [
+    /\+?1?[\s\-\.]?\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4}/,  // (801) 423-1345
+    /\+91[\s\-]?[6-9]\d{9}/,   // Indian +91
+    /\b[6-9]\d{9}\b/,           // Indian 10-digit mobile
+    /\b0\d{10}\b/,              // Indian with leading 0
+  ];
+
+  for (const pattern of phonePatterns) {
+    const m = cardText.match(pattern);
+    if (m) {
+      phone = m[0].trim();
+      break;
+    }
+  }
+}
 
         // ── Address ──────────────────────────────────────────────────────
         let address = null;
