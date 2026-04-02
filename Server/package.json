@@ -9,6 +9,11 @@
     "dev": "node --watch server.js",
     "postinstall": "node -e \"console.log('Skipping Puppeteer download for production')\""
   },
+  "config": {
+    "puppeteer": {
+      "cacheDirectory": ".cache/puppeteer"
+    }
+  },
   "dependencies": {
     "cheerio": "^1.2.0",
     "cors": "^2.8.5",

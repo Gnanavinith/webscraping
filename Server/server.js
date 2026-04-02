@@ -12,6 +12,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust proxy for Render (fixes X-Forwarded-For warning)
+app.set('trust proxy', 1);
+
 // Configure Puppeteer for Render
 const getPuppeteerConfig = () => {
   const isRender = process.env.RENDER || false;
@@ -31,11 +34,7 @@ const getPuppeteerConfig = () => {
       '--single-process',
       '--disable-gpu'
     ],
-    executablePath: isRender ? undefined : undefined, // Let puppeteer use default Chrome locally
-    env: {
-      ...process.env,
-      PUPPETEER_CACHE_DIR: path.join(__dirname, '.cache', 'puppeteer')
-    }
+    executablePath: undefined // Let puppeteer find the installed chrome
   };
 };
 
