@@ -52,7 +52,7 @@ export default function WhatsAppButton({ phone, businessName }) {
     const selectedCompany = companyConfig[company]
 
     // ✅ Message (customize if needed)
-    const message = `Hi ${businessName},
+    let message = `Hi ${businessName},
 
 
 I found your business while searching on Google Maps.
@@ -75,7 +75,13 @@ We at ${selectedCompany.name} can help you with:
 
 If you're open, I can share a quick idea for your business.
 
+
 Check out our portfolio: ${selectedCompany.portfolio}`
+
+    // Add Instagram link for ZeonHub
+    if (company === 'zeonhub' && selectedCompany.instagram) {
+      message += `\n\nFollow us on Instagram: ${selectedCompany.instagram}`
+    }
 
     // ✅ Use wa.me (best practice)
     const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
